@@ -6,7 +6,7 @@ from flax import linen as nn, traverse_util
 from flax.core import frozen_dict
 from flax.linen import partitioning as nn_partitioning
 
-# Default sharding rules for the ESM-2 model on TPUs
+# Default sharding rules for the ESM-2 model on TPUs.
 DEFAULT_TPU_RULES = [
     ("batch", "X"),
     ("hidden", "Y"),
@@ -37,16 +37,22 @@ def get_params_axes(
             for *all* params. (All with no sharding originally now have None, that is
             full replication on all devices in mesh.)
     """
+    # Utility function, converts keys such as `kernel_axes` -> `kernel`.
     axes_modifier_dict = nn_partitioning.get_axis_names(esm_axes)
+    # Flatten dict with the full params structure.
     axes_modifier_dict = traverse_util.flatten_dict(axes_modifier_dict, sep="/")
 
+    # Flatten dict with the axis metadata for sharded params.
     axes_dict = traverse_util.flatten_dict(esm_params["params"], sep="/")
+    # If key matches a key in the full params PyTree, replace with converted axis metadata.
+    # Else replace with None, that is, no sharding.
     axes_dict = {
         k: nn_partitioning.logical_to_mesh_axes(axes_modifier_dict[k], rules=rules)
         if k in axes_modifier_dict.keys()
         else None
         for k in axes_dict.keys()
     }
+    # Unflatten dict back to original structure.
     axes_dict = traverse_util.unflatten_dict(axes_dict, sep="/")
     axes_dict = frozen_dict.freeze({"params": axes_dict})
     return axes_dict
