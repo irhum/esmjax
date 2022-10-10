@@ -134,12 +134,32 @@ class ESM2(nn.Module):
         return embeds
 
 
-def get_esm2_model(cfg):
-    """Given original PyTorch state cfg dict, return JAX model using the spec.
+class ESM2MLM(ESM2):
+    """Modified version of ESM2 that returns logits."""
 
+    @nn.compact
+    def __call__(self, tokens):
+        embeds = super().__call__(tokens)
+
+        final_ffn_dim = self.embedding.features
+        num_embeddings = self.embedding.num_embeddings
+
+        x = nn.Dense(final_ffn_dim, name="lm_head_fc")(embeds)
+        x = nn.gelu(x, approximate=False)
+        x = nn.LayerNorm(epsilon=1e-5, name="lm_head_layer_norm")(x)
+
+        bias = self.param("logit_bias", nn.initializers.zeros, (num_embeddings,))
+        x = self.embedding.attend(x) + bias
+
+        return x
+
+
+def get_esm2_model(cfg, lm_head: bool = False):
+    """Given original PyTorch state cfg dict, return JAX model using the spec.
     Args:
         cfg (dict): Original PyTorch state cfg dict
-
+        lm_head (bool, optional): If True, returns model with the language model
+        head on top (will compute logits instead of embeddings). Defaults to False.
     Returns:
         Tuple[nn.Module, FrozenDict]: First value is the ESM2 nn.Module, second
             is the sharding spec for all params where a constraint is specified.
@@ -150,10 +170,15 @@ def get_esm2_model(cfg):
 
     embedding = nn.Embed(33, embed_dim)
     block_fn = functools.partial(EncoderLayer, num_heads, embed_dim, embed_dim * 4)
-    esm2 = ESM2(embedding, block_fn, num_layers)
+    esm_fn = ESM2MLM if lm_head else ESM2
+    esm2 = esm_fn(embedding, block_fn, num_layers)
 
     key = jax.random.PRNGKey(0)
     arr = jnp.array([[0, 1, 2]])
+
+    # jax.eval_shape uses "fake" arrays to avoid using up device memory.
+    # This way we can just extract `params_axes`, since the actual params loading
+    # is in io.py.
     _, params_axes = jax.eval_shape(esm2.init, key, arr).pop("params_axes")
 
     return esm2, params_axes
