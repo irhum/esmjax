@@ -110,8 +110,29 @@ def convert_encoder_layer(torch_params, cfg, layer_num: int, delete: bool = Fals
     return params
 
 
+def convert_lm_head(torch_params: Mapping[str, torch.Tensor], delete: bool = False):
+    """Returns nested dictionary of params needed for the language model head."""
+    params = {"lm_head_fc": {}, "lm_head_layer_norm": {}}
+
+    # Begin extraction.
+    extract_fn = functools.partial(extract, torch_params=torch_params, delete=delete)
+
+    params["lm_head_fc"]["kernel"] = extract_fn("encoder.lm_head.dense.weight").T
+    params["lm_head_fc"]["bias"] = extract_fn("encoder.lm_head.dense.bias")
+    params["lm_head_layer_norm"]["scale"] = extract_fn(
+        "encoder.lm_head.layer_norm.weight"
+    )
+    params["lm_head_layer_norm"]["bias"] = extract_fn("encoder.lm_head.layer_norm.bias")
+    params["logit_bias"] = extract_fn("encoder.lm_head.bias")
+
+    return params
+
+
 def convert_encoder(
-    torch_params: Mapping[str, torch.Tensor], cfg, delete: bool = False
+    torch_params: Mapping[str, torch.Tensor],
+    cfg,
+    delete: bool = False,
+    lm_head: bool = False,
 ):
     """Returns nested dictionary with params for the full encoder network.
 
@@ -120,6 +141,8 @@ def convert_encoder(
         cfg (dict): Config dict obtained when loading the torch state.
         delete (bool, optional): If True, will remove loaded torch weight from memory once
             converted, to alleviate memory pressure when loading large models. Defaults to False.
+        lm_head (bool, optional): If True, `torch_params` will also have params for the language
+            model head. Defaults to False.
 
     Returns:
         params: Nested dictionary of np.ndarrays containing the converted weights.
@@ -144,5 +167,8 @@ def convert_encoder(
     norm_prefix = f"{prefix}.emb_layer_norm_after"
     params["post_norm"]["scale"] = extract_fn(f"{norm_prefix}.weight")
     params["post_norm"]["bias"] = extract_fn(f"{norm_prefix}.bias")
+
+    if lm_head:
+        params.update(convert_lm_head(torch_params, delete=delete))
 
     return params
